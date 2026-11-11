@@ -33,6 +33,7 @@
   - 상대국별 수출입 비중 확인
   - 처음 보는 사람도 바로 이해할 수 있는 대시보드 구현
 
+> 현재 대시보드는 저장소의 CSV를 직접 읽습니다. MySQL 적재 코드는 별도 실험용이며 앱 실행에 필요하지 않습니다.
 
 ### 🛠 사용 기술
 
@@ -42,7 +43,7 @@
 | 데이터 수집 | 관세청 OpenAPI (공공데이터포털) |
 | 데이터 처리 | ![pandas](https://img.shields.io/badge/pandas-150458?style=flat-square&logo=pandas&logoColor=white) |
 | 시각화 / 웹 | ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white) · `Altair` |
-| 환경 관리 | `uv` · `.env` 기반 DB 접속 설정 |
+| 환경 관리 | `uv` · MySQL 실험용 `.env` 설정 |
 
 <br>
 
@@ -59,7 +60,7 @@
 - **금액과 중량** : 금액은 달러(수출 FOB, 수입 CIF), 중량은 kg(순중량)입니다.
 - **주의** : 관세청이 매월 신고 정정 내용을 반영하므로 최근 달은 바뀔 수 있습니다. 합계는 상대국 10개국의 합이며 한국 전체 수출입이 아닙니다.
 
-**데이터 흐름** : API 수집 → 컬럼·코드 정규화 → 중복·누락·산식 검사 → DB 적재 → 분석 집계 → Streamlit
+**대시보드 데이터 흐름** : 저장소의 CSV → 화면용 변환·집계 → Streamlit. 앱을 실행할 때 외부 API나 DB를 호출하지 않습니다.
 
 | 수집 파일 열 | ERD 열 | 비고 |
 | :--- | :--- | :--- |
@@ -79,10 +80,15 @@
 | `stats` | 국가. 국가코드, 국가명, 영문 국가명 | PK: `statCd` |
 | `trades` | 거래. 월 × 국가 × HS 코드별 수출입 금액·중량·무역수지 | PK: `year` + `statCd` + `hsCd` |
 
+> 화면에서는 25개 코드를 부품 20개(개별 19개 + 나머지 6개를 합친 기타)로 묶어 보여줍니다. 표시 단위인 백만 달러와 톤으로 바꾸는 곳은 [`utils/data.py`](utils/data.py)의 `load_dashboard_data()`뿐입니다.
 
 <br>
 
 ## 5. 주요 기능
+
+> 왼쪽 메뉴에서 페이지를 고릅니다. 네 분석 페이지의 공통 기간은 사이드바에서 선택합니다. 시작 월과 끝 월을 포함해 최대 12개월이며, 선택 범위를 넘기면 끝 월이 시작 월부터 12개월째로 자동 조정됩니다. 페이지별 필터는 각 페이지 제목 아래 한 줄에 표시됩니다. 국가 선택 메뉴와 나라별 비중 그래프에는 국가명과 국기를 함께 표시합니다.
+
+전체 흐름·부품별 무역수지·금액과 중량은 작년 같은 기간과 비교합니다. 나라별 비중은 선택한 기간의 첫 달과 마지막 달 비중 차이를 퍼센트포인트(%p)로 보여줍니다.
 
 ### 5-1. 전체 흐름 `views/trend.py`
 - 지표 카드 3종 (수출액, 수입액, 무역수지), 작년 같은 기간 대비 변화
@@ -123,48 +129,20 @@
 
 ### 로컬 실행
 
-Python 3.12, `uv`, MySQL 8.0 이상이 필요합니다. 먼저 프로젝트 루트에서 환경변수 파일을 만들고 MySQL 접속 정보를 입력합니다.
+Python 3.12와 `uv`가 필요합니다. 대시보드는 저장소에 포함된 CSV를 읽으므로 MySQL 접속 정보나 `.env` 설정 없이 실행할 수 있습니다.
 
 ```bash
-cp .env.example .env
-# .env의 DB_PASSWORD를 로컬 MySQL 비밀번호로 수정
+uv run --python 3.12 --with-requirements requirements.txt streamlit run app.py
 ```
 
-처음 실행할 때는 CSV 데이터를 MySQL에 적재합니다. `build_db.py`는 `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`를 사용하고 `mysql_streamlit_app` 데이터베이스를 만듭니다. **기존 테이블을 삭제하고 다시 만들기 때문에 비어 있는 전용 데이터베이스에서만 실행하세요.**
-
-```bash
-uv run --env-file .env --python 3.12 --with-requirements requirements.txt \
-  python mysql_streamlit_app/database/build_db.py
-```
-
-적재가 끝나면 대시보드를 실행합니다. `.env.example`의 기본 DB 이름은 `mysql_streamlit_app`입니다.
-
-```bash
-uv run --env-file .env --python 3.12 --with-requirements requirements.txt \
-  streamlit run app.py
-```
+MySQL 적재 스크립트는 별도 MySQL 실험용입니다. 이 스크립트는 `mysql_streamlit_app`의 테이블을 삭제하고 다시 만들기 때문에, 기존 운영 DB가 아닌 전용 DB에서만 실행하세요.
 
 ### Streamlit Community Cloud 배포
 
-Cloud 앱은 개발 PC의 MySQL에 접속할 수 없습니다. 먼저 외부 접속이 가능한 MySQL 8.0 데이터베이스를 준비하고, 호스트·포트와 계정을 발급받으세요. 로컬 PC에서 DB를 초기 적재할 때도 `.env`의 `DB_HOST`를 이 원격 MySQL 주소로 설정합니다. 초기 적재 계정에는 데이터베이스와 테이블을 만들고 데이터를 넣을 권한이 필요합니다. 앱이 실행될 때 사용하는 계정은 `parts`, `stats`, `trades`를 읽을 수 있어야 합니다.
+1. Streamlit Community Cloud에서 **Create app**을 선택하고 이 저장소와 CSV 로더 코드가 포함된 브랜치를 선택합니다. **Main file path**는 `app.py`입니다.
+2. 배포합니다. 대시보드는 `mysql_streamlit_app/database/hs8708_10countries.csv`를 직접 읽으므로 DB 접속 정보나 Streamlit Secrets가 필요하지 않습니다.
 
-1. `.env.example`을 `.env`로 복사하고 원격 MySQL의 `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`를 입력합니다. `DB_NAME`은 `mysql_streamlit_app`으로 둡니다. 이 파일은 GitHub에 올리지 않습니다.
-2. 위의 초기 적재 명령을 실행합니다. 이 스크립트는 기존 `mysql_streamlit_app`의 세 테이블을 재생성하므로, 운영 중인 DB가 아니라 배포용 전용 데이터베이스에서 한 번만 실행하세요.
-3. Streamlit Community Cloud에서 **Create app**을 선택하고 이 GitHub 저장소와 배포할 브랜치를 지정합니다. **Main file path**는 `app.py`입니다.
-4. **Advanced settings → Secrets**에 아래 형식을 붙여 넣고 실제 원격 DB 값으로 바꿉니다. 비밀번호와 DB 주소가 든 Secrets는 GitHub에 커밋하지 않습니다.
-
-```toml
-[mysql]
-host = "원격-MySQL-호스트"
-port = 3306
-user = "대시보드-DB-사용자"
-password = "DB-비밀번호"
-database = "mysql_streamlit_app"
-```
-
-5. 저장 후 배포를 시작합니다. 코드는 우선 환경변수 `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`을 확인하고, 값이 없으면 위 `[mysql]` Secrets를 사용합니다. 배포 뒤 연결 오류가 나면 앱 로그와 DB의 외부 접속 허용 설정을 확인하세요.
-
-Community Cloud는 앱 생성 시 저장소·브랜치·진입점 파일을 지정하고 같은 화면의 Advanced settings에서 Secrets를 입력합니다. 자세한 내용은 [앱 배포 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)와 [Secrets 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)를 참고하세요.
+화면은 저장소에 포함된 정적 CSV를 사용합니다. 최신 자료를 반영하려면 CSV를 갱신해 저장소에 올려야 합니다. Community Cloud의 Secrets는 DB나 API 등 외부 서비스 인증 정보가 필요한 경우에만 설정합니다. [앱 배포 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)와 [Secrets 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)를 참고하세요.
 
 ### 디렉토리 구조
 
@@ -185,10 +163,12 @@ SKN38-1st-3Team/
 ├── utils/
 │   ├── parts_catalog.py    ← 부품별 화면 이름, 공식 HS 품명, 설명, 위치, 이미지 정보
 │   ├── constants.py        ← 10개국 목록, 기간, 용어
-│   ├── data.py             ← MySQL 조회 및 화면용 변환
+│   ├── data.py             ← 저장소 CSV 로드 및 화면용 변환
 │   └── common.py           ← 필터, 기간 집계, 증감률, 숫자 표시 형식
 └── docs/images/            ← ERD, 화면 캡처
 ```
+
+부품 위치 시각화 전 검토 목록은 [`docs/component-locations.md`](docs/component-locations.md)입니다.
 
 <br>
 
