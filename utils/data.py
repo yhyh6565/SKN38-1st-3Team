@@ -18,7 +18,7 @@ CSV_PATH = (
 
 @st.cache_data(ttl=300)
 def load_dashboard_data():
-    frame = pd.read_csv(CSV_PATH, dtype={"hsCd": str, "statCd": str})
+    frame = pd.read_csv(CSV_PATH, dtype={"hsCd": str, "statCd": str, "year": str})
     if frame.empty:
         st.error("저장소에 표시할 CSV 데이터가 없습니다.")
         st.stop()
