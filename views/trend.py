@@ -118,7 +118,7 @@ def trend_page():
     )
     band = (
         alt.Chart(band_data)
-        .mark_rect(opacity=0.12, color="#1d58b0")
+        .mark_rect(opacity=0.12, color="#1d58b0", tooltip=False)
         .encode(x="시작:Q", x2="끝:Q")
     )
     first_axis_year = int(DATA_FIRST_MONTH[:4])
